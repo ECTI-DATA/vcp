@@ -1,68 +1,60 @@
 library(shiny)
-library(shinydashboard)
-library(shiny)
 library(quantmod)
-#library(rstudioapi)
+library(PerformanceAnalytics)
+library(dygraphs)
+library(stringr)
 library(openxlsx)
-#library(xts)        
-library(rvest)      
-#library(tidyverse) 
-library(stringr)    
-#library(forcats)    
-#library(lubridate)  
-library(plotly)     
 library(corrplot)
 library(shinybusy)
-library(TTR)
-library(shinyWidgets)
-library(thematic)
-library(bslib)
-library(shinythemes)
-library(fresh)
-library(shinydashboardPlus)
 
-thematic_shiny(font = "auto")
+shinyUI(fluidPage(tags$style(type="text/css", ".shiny-output-error { visibility: hidden; }"),
 
+    # Application title
+    titlePanel("Virtual Crypto Currency Portfolio Builder"),
 
-dashboardPage(
-    
-    dashboardHeader(disable = TRUE),
-    dashboardSidebar(disable = FALSE,width = "1px"),
-    dashboardBody(
-        fluidRow(
-           box(
-               radioButtons("upload_option","Select option to get data",choices = c("Automatically","Upload from file")),
-               width = 4
-               ),
-           box(uiOutput("upload_file"),
-               downloadButton("sample","Download sample Cryptocurrency list"),
-               width = 4
-               ),
-           box(
-               selectInput("no_of_ticker","Select number of Cryptocurrencies for analysis",choices = c(3,5,10,15,20,30,50),selected = 3),
-               actionButton("decide","Submit"),
-               width = 4
-               )
+    # Sidebar with a slider input for number of bins
+    sidebarLayout(
+        sidebarPanel(
+            conditionalPanel("input.set1== 'Crypto Currency Returns' || input.set1== 'Correlation'",radioButtons("upload_selection","Select to get crypto currency data",choices = c("Enter manually","Upload from file"))),
+            conditionalPanel("input.set1== 'Crypto Currency Returns' || input.set1== 'Correlation'",uiOutput("choice")),
+            conditionalPanel("input.set1== 'Portfolio Performance' ",textInput("benchmark","Select benchmark crypto currency",value = "BTC-USD")),
+
+            conditionalPanel("input.set1== 'Crypto Currency Returns' || input.set1== 'Correlation' || input.set1== 'Portfolio Performance' ",actionButton("submit","Submit")),
+            tags$br(),
+            selectInput("year","Select starting year",choices = c(2000:2021)),
+
+            radioButtons("return_type","Select frequency",choices = c("Daily"="daily","Weekly"="weekly","Monthly"="monthly")),
+
+            conditionalPanel("input.set1== 'Crypto Currency Returns' || input.set1== 'Correlation'",downloadButton("download_sample","Download sample file")),
+            tags$br(),
+            conditionalPanel("input.set1== 'Crypto Currency Returns' || input.set1== 'Correlation'",downloadButton("download_list","Download crypto currency symbol list"))
         ),
-        fluidRow( 
-            box(title = "Price correlation plot",
-                solidHeader = FALSE,
-                fluidRow(column(12,align = "center",plotOutput("corr_prices",height = 300,width = 500))),
-                fluidRow(
-                    column(6,align = "right",actionButton("view_plot1","Zoom Plot")),
-                    column(6,align = "left",downloadButton("Download_plot_1","Download Plot"))
-                )
-                ),
-            box(title = "Returns correlation plot",
-                solidHeader = FALSE,
-                fluidRow(column(12,align = "center",plotOutput("corr_returns",height = 300,width = 500))),
-                fluidRow(
-                    column(6,align = "right",actionButton("view_plot2","Zoom plot")),
-                    column(6,align = "left",downloadButton("Download_plot_2","Download Plot"))
-                )
-                )
+
+        # Show a plot of the generated distribution
+        mainPanel(
+            tabsetPanel(id="set1",
+                        tabPanel("Crypto Currency Returns",
+                                 dygraphOutput("plot1"),
+                                 tags$br(),
+                                 textOutput("legend")
+                                 ),
+                        tabPanel("Correlation",
+                                 tags$br(),
+                                 fluidRow(column(1,uiOutput("icon1")),column(11,uiOutput("corr_message"))),
+                                 tags$br(),
+                                 plotOutput("cor")
+                                 ),
+                        tabPanel("Portfolio Performance",
+                                 tags$br(),
+                                 fluidRow(column(1,uiOutput("icon3")), column(11,uiOutput("message"))),
+                                 tags$br(),
+                                 fluidRow(column(1,uiOutput("icon2")), column(11,uiOutput("message2"))),
+                                 tags$br(),
+                                 fluidRow(column(1,uiOutput("icon4")), column(11,uiOutput("message3"))),
+                                 dygraphOutput("plot2"),
+                                 tags$br(),
+                                 textOutput("legend2")
+                                 ))
         )
-    ),
-    controlbar = dashboardControlbar(collapsed = TRUE, skinSelector())
-    
-)
+    )
+))

@@ -1,132 +1,190 @@
-server <- function(input, output) { 
-    
-    file_path <- eventReactive(input$decide,{
-        if (input$upload_option=="Upload from file") {
-            file <- input$ticker_upload$datapath
+shinyServer(function(input, output) {
+
+    output$choice <- renderUI({
+        if (input$upload_selection=="Enter manually") {
+            textInput("tickers","Enter crypto currency symbols seperated by comma without space")
         }else{
-            file <- "tickers.xlsx"
-        }
-        
-        file
-    })
-    
-    data <- reactive({
-        
-        req(file_path())
-        show_modal_spinner() # show the modal window
-        
-        ticker <- read.xlsx(file_path())
-        data <- lapply(ticker[1:input$no_of_ticker,1],FUN = getSymbols, auto.assign =FALSE)
-        names(data) <- ticker[1:input$no_of_ticker,1]
-        remove_modal_spinner()
-        data
-    })
-    
-    output$upload_file <- renderUI({
-        if (input$upload_option=="Upload from file") {
-            fileInput("ticker_upload","Select FIle")
+            fileInput("tickers","Upload excel contaings crypto currency symbols")
         }
     })
-    
-    correlation <- reactive({
-        data <- data()
-        data <- lapply(data,function(x) {
-            names(x)=c("Open","High", "Low","Close","Volume","Adjusted")
+
+    ticker <- eventReactive(input$submit,{
+        if (input$upload_selection == "Enter manually") {
+            ticker <- input$tickers
+            ticker <- ticker <- gsub(" ", "", ticker)
+            ticker <- unlist(strsplit(ticker,split = ","))
+        }else{
+            ticker <- read.xlsx(input$tickers$datapath)[,1]
+        }
+        ticker <- c(ticker,input$benchmark)
+        ticker
+    })
+
+    data_base <- reactive({
+        ticker <- ticker()
+
+        data <- lapply(ticker, getSymbols, auto.assign = FALSE)
+        names(data) <- ticker
+
+        data <- lapply(data,function(x){
+            x <- x[,6]
+            names(x) <- "Adjusted"
             x
         })
-        
-        data1 <- lapply(data, function(x){
-            x <- x[,"Adjusted"]
-            x
-        })
-        
-        data2 <- lapply(data1, function(x){
+
+        data <- lapply(data, function(x){
             x <- na.approx(x[,"Adjusted"])
             x
         })
-        
-        row_num <- lapply(data2,function(x){
-            nrow(x)
+        names(data) <- ticker
+
+        data
+
+    })
+
+    data_returns <- reactive({
+        data <- data_base()
+        horizon <- paste0(as.character(input$year), "/", as.character(Sys.Date()))
+
+        data <- lapply(data, function(x){
+            x <- x[horizon]
+            x
         })
-        
-        row_num <- unlist(row_num)
-        row_num <- row_num[row_num >400]
-        
-        data_pri <- as.data.frame(NULL)
-        data_ret <- as.data.frame(NULL)
-        
-        for(i in names(row_num)){
-            
-            data_pri[1:400,i] <- data2[[i]][1:400,"Adjusted"]
-            data_ret[1:400,i] <- dailyReturn(data2[[i]][1:400,"Adjusted"],type = "log")
+        data <- lapply(data, periodReturn,period = input$return_type, type = "arithmetic")
+        data
+
+        ##
+        data_return <- data[[1]]
+
+        for (i in 1:(length(data)-1)) {
+            data_return <- merge.xts(data_return,data[[i+1]])
         }
-        
-        list(data_pri,data_ret)
-        
-    })
-    
-    output$corr_prices <- renderPlot({
-        data <- correlation()
-        data <- data[[1]]
-        corrplot(cor(data),tl.col = "black")
-    })
-    
-    output$corr_returns <- renderPlot({
-        data <- correlation()
-        data <- data[[2]]
-        corrplot(cor(data),tl.col = "black")
-    })
-    
-    output$Download_plot_1 <- downloadHandler(filename = function(){
-        paste("Correlation_plot_1.png",sep = "")
-    },content = function(file){
 
-        png(file,width=1200,height=1200)
-        data <- correlation()
-        data <- data[[1]]
-        corrplot(cor(data),tl.col = "black")
-        dev.off()
+        #Setting COlumn Names
+
+        ticker <- ticker()
+        colnames(data_return) <- ticker
+
+        data_return
+
     })
 
-    output$Download_plot_2 <- downloadHandler(filename = function(){
-        paste("Correlation_plot_2.png",sep = "")
-    },content = function(file){
+    output$plot1 <- renderDygraph({
 
-        png(file,width=1200,height=1200,units = "px")
-        data <- correlation()
-        data <- data[[2]]
-        corrplot(cor(data),tl.col = "black")
-        dev.off()
+        data <- data_returns()
+
+        dygraph(data, main = "Crypto currency Comparison") %>%
+            dyAxis("y", label = "Return") %>%
+            dyRangeSelector() %>%
+            dyOptions(colors = RColorBrewer::brewer.pal(4, "Set2"),strokeWidth = 2) %>%
+            dyLegend(labelsDiv = "legend")
+
+
     })
-    
-    output$corr_prices_dialog <- renderPlot({
-        data <- correlation()
-        data <- data[[1]]
-        corrplot(cor(data),tl.col = "black")
+
+    output$cor <- renderPlot({
+        data <- data_returns()
+
+        if(!(TRUE %in% c(is.na(data)))){
+            corrplot(cor(data),method = "number")
+        }
+
     })
-    
-    output$corr_returns_dialog <- renderPlot({
-        data <- correlation()
-        data <- data[[2]]
-        corrplot(cor(data),tl.col = "black")
+
+    portfolio <- reactive({
+        data <- data_returns()
+        #removing and NA and filling it interpolation
+        for (i in 1:ncol(data)) {
+            data[,i] <- na.approx(data[,i])
+        }
+
+        weight <- read.xlsx(input$tickers$datapath)[,2]
+        portfolio_returns <- Return.portfolio(R = data[,1:(ncol(data)-1)], weights = weight, wealth.index = TRUE)
+        benchmark_returns <- Return.portfolio(R = data[,4], wealth.index = TRUE)
+        comp <- merge.xts(portfolio_returns, benchmark_returns)
+        colnames(comp) <- c("Portfolio", "Benchmark")
+        comp
     })
-    
-    observeEvent(input$view_plot1,{
-        showModal(modalDialog(plotOutput("corr_prices_dialog",height = 1000,width = 1000),
-                              footer = modalButton("Dismiss"),
-                              easyClose = TRUE,
-                              size = "l"))
+
+    output$message <- renderUI({
+        if(input$upload_selection=="Enter manually"){
+            h4(tags$b("Please upload excel file with crypto currency symbols and weights in 'Crypto Currency Returns' tab. Sum of weights of all the crypto currency must be equal to 1."))
+        }
     })
-    
-    observeEvent(input$view_plot2,{
-        showModal(modalDialog(fluidRow(column(10,plotOutput("corr_returns_dialog",height = 1000,width = 1000))),
-                              footer = modalButton("Dismiss"),
-                              easyClose = TRUE,size = "l"))
+
+
+    output$icon3 <- renderUI({
+
+        if(input$upload_selection=="Enter manually"){
+            img(src='alert.png', align = "center",height = 60, width = 60)
+        }
     })
-    
-    output$sample <- downloadHandler(filename = "Cryptocurreccy_sample.xlsx",content = function(file){
-        data <- read.xlsx("tickers.xlsx")
-        write.xlsx(data,file)
+
+    output$plot2 <- renderDygraph({
+        comp <- portfolio()
+        weight_data <- read.xlsx(input$tickers$datapath)
+        if (sum(weight_data[,2])==1 && sum(is.na(weight_data[,2]))==0) {
+            dygraph(comp, main = "Portfolio Performance vs. Benchmark") %>%
+                dyAxis("y", label = "Amount ($)") %>%
+                dyRangeSelector() %>%
+                dyOptions(colors = RColorBrewer::brewer.pal(4, "Set2"),strokeWidth = 2) %>%
+                dyLegend(labelsDiv = "legend2")
+        }
+
     })
-    
-}
+
+    output$download_sample <- downloadHandler(filename = "symbols.xlsx",content = function(file){
+        symbols <- read.xlsx("data/symbols.xlsx")
+        write.xlsx(symbols,file)
+    })
+
+    output$download_list <- downloadHandler(filename = "symbols_list.xlsx",content = function(file){
+        symbols <- read.xlsx("data/symbols_list.xlsx")
+        write.xlsx(symbols,file)
+    })
+
+    output$corr_message <- renderUI({
+        data <- data_returns()
+        if(TRUE %in% c(is.na(data))){
+            h4(tags$b("Data is not sufficient to plot the correlation plot. Data for one of the crypto currency is not available for the selected starting starting year. Please select another starting date."))
+        }
+    })
+
+    output$icon1 <- renderUI({
+        data <- data_returns()
+        if(TRUE %in% c(is.na(data))){
+            img(src='alert.png', align = "center",height = 60, width = 60)
+        }
+    })
+
+    output$message2 <- renderUI({
+        weight_data <- read.xlsx(input$tickers$datapath)
+        if (sum(weight_data[,2])!=1 || sum(is.na(weight_data[,2]))!=0) {
+            h4(tags$b("Either sum of all the weights is not equal to one, or weight of all the crypto currency are not provided in the excel. So please check the uploaded file and try again."))
+        }
+    })
+
+    output$message3 <- renderUI({
+        data <- data_returns()
+        if(TRUE %in% c(is.na(data))){
+            h4(tags$b("Data is not sufficient. Data for one of the crypto currency is not available for the selected starting starting year. Please select another starting date."))
+        }
+    })
+
+    output$icon2 <- renderUI({
+        weight_data <- read.xlsx(input$tickers$datapath)
+        if (sum(weight_data[,2])!=1 || sum(is.na(weight_data[,2]))!=0) {
+            img(src='alert.png', align = "center",height = 60, width = 60)
+        }
+    })
+
+    output$icon4 <- renderUI({
+        data <- data_returns()
+        if (TRUE %in% c(is.na(data))) {
+            img(src='alert.png', align = "center",height = 60, width = 60)
+        }
+    })
+
+
+
+})
